@@ -77,9 +77,21 @@ module Prawn
         spec = {}
         spec[:box] = deref(field_dict[:Rect])
         spec[:default_value] = string_to_utf8(deref(field_dict[:V] || field_dict[:DV]))
-        spec[:page_number] = page_numbers[field_dict[:P]]
+        page_ref = field_dict[:P]
+        unless page_ref
+          # The /P (page) entry is optional, so if there's only one page, assume the first page.
+          # If there is more than one page, but the annotation doesn't specify
+          # which page, skip the annotation.
+          # XXX - Is this the correct behaviour?
+          if page_numbers.length == 1
+            page_ref = page_numbers.keys.first
+          else
+            next
+          end
+        end
+        spec[:page_number] = page_numbers[page_ref]
         spec[:refs] = {
-          :page => field_dict[:P],
+          :page => page_ref,
           :field => field_ref,
           :acroform_fields => form_fields,
         }
