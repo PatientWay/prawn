@@ -5,7 +5,7 @@
 # into the lib/prawn/core/* source tree.
 #
 module Prawn #:nodoc:
-  VERSION = "0.11.1.0.pw1"
+  VERSION = "0.11.1.0.pw2"
 end
 
 require "prawn/core"
