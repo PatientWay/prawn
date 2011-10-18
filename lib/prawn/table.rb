@@ -11,6 +11,7 @@ require 'prawn/table/cell'
 require 'prawn/table/cell/in_table'
 require 'prawn/table/cell/text'
 require 'prawn/table/cell/subtable'
+require 'prawn/table/cell/image'
 
 module Prawn
 
@@ -82,6 +83,10 @@ module Prawn
   #   for defaulting widths is currently pretty boneheaded. If you experience
   #   problems like weird column widths or CannotFit errors, try manually
   #   setting widths on more columns.
+  # +position+::
+  #   Either :left (the default), :center, :right, or a number. Specifies the
+  #   horizontal position of the table within its bounding box. If a number is
+  #   provided, it specifies the distance in points from the left edge.
   #
   # = Initializer Block
   #
@@ -121,6 +126,7 @@ module Prawn
       @pdf = document
       @cells = make_cells(data)
       @header = false
+      @epsilon = 1e-9
       options.each { |k, v| send("#{k}=", v) }
 
       if block
@@ -143,6 +149,11 @@ module Prawn
     # Manually set the width of the table.
     #
     attr_writer :width
+
+    # Position (:left, :right, :center, or a number indicating distance in
+    # points from the left edge) of the table within its parent bounds.
+    #
+    attr_writer :position
 
     # Returns the width of the table in PDF points.
     #
@@ -168,7 +179,7 @@ module Prawn
       when Hash
         widths.each { |i, w| column(i).width = w }
       when Numeric
-        columns.width = widths
+        cells.width = widths
       else
         raise ArgumentError, "cannot interpret column widths"
       end
@@ -220,86 +231,88 @@ module Prawn
     # Draws the table onto the document at the document's current y-position.
     #
     def draw
-      # The cell y-positions are based on an infinitely long canvas. The offset
-      # keeps track of how much we have to add to the original, theoretical
-      # y-position to get to the actual position on the current page.
-      offset = @pdf.y
+      with_position do
+        # The cell y-positions are based on an infinitely long canvas. The offset
+        # keeps track of how much we have to add to the original, theoretical
+        # y-position to get to the actual position on the current page.
+        offset = @pdf.y
 
-      # Reference bounds are the non-stretchy bounds used to decide when to
-      # flow to a new column / page.
-      ref_bounds = @pdf.bounds.stretchy? ? @pdf.margin_box : @pdf.bounds
+        # Reference bounds are the non-stretchy bounds used to decide when to
+        # flow to a new column / page.
+        ref_bounds = @pdf.reference_bounds
 
-      last_y = @pdf.y
+        last_y = @pdf.y
 
-      # Determine whether we're at the top of the current bounds (margin box or
-      # bounding box). If we're at the top, we couldn't gain any more room by
-      # breaking to the next page -- this means, in particular, that if the
-      # first row is taller than the margin box, we will only move to the next
-      # page if we're below the top. Some floating-point tolerance is added to
-      # the calculation.
-      #
-      # Note that we use the actual bounds, not the reference bounds. This is
-      # because even if we are in a stretchy bounding box, flowing to the next
-      # page will not buy us any space if we are at the top.
-      if @pdf.y > @pdf.bounds.height + @pdf.bounds.absolute_bottom - 0.001
-        # we're at the top of our bounds
-        started_new_page_at_row = 0
-      else
-        started_new_page_at_row = -1
-
-        # If there isn't enough room left on the page to fit the first data row
-        # (excluding the header), start the table on the next page.
-        needed_height = row(0).height
-        needed_height += row(1).height if @header
-        if needed_height > @pdf.y - ref_bounds.absolute_bottom
-          @pdf.bounds.move_past_bottom
-          offset = @pdf.y
+        # Determine whether we're at the top of the current bounds (margin box or
+        # bounding box). If we're at the top, we couldn't gain any more room by
+        # breaking to the next page -- this means, in particular, that if the
+        # first row is taller than the margin box, we will only move to the next
+        # page if we're below the top. Some floating-point tolerance is added to
+        # the calculation.
+        #
+        # Note that we use the actual bounds, not the reference bounds. This is
+        # because even if we are in a stretchy bounding box, flowing to the next
+        # page will not buy us any space if we are at the top.
+        if @pdf.y > @pdf.bounds.height + @pdf.bounds.absolute_bottom - 0.001
+          # we're at the top of our bounds
           started_new_page_at_row = 0
+        else
+          started_new_page_at_row = -1
+
+          # If there isn't enough room left on the page to fit the first data row
+          # (excluding the header), start the table on the next page.
+          needed_height = row(0).height
+          needed_height += row(1).height if @header
+          if needed_height > @pdf.y - ref_bounds.absolute_bottom
+            @pdf.bounds.move_past_bottom
+            offset = @pdf.y
+            started_new_page_at_row = 0
+          end
         end
+
+        # Track cells to be drawn on this page. They will all be drawn when this
+        # page is finished.
+        cells_this_page = []
+
+        @cells.each do |cell|
+          if cell.height > (cell.y + offset) - ref_bounds.absolute_bottom &&
+             cell.row > started_new_page_at_row
+            # Ink all cells on the current page
+            Cell.draw_cells(cells_this_page)
+            cells_this_page = []
+
+            # start a new page or column
+            @pdf.bounds.move_past_bottom
+            draw_header unless cell.row == 0
+            offset = @pdf.y - cell.y
+            started_new_page_at_row = cell.row
+          end
+   
+          # Don't modify cell.x / cell.y here, as we want to reuse the original
+          # values when re-inking the table. #draw should be able to be called
+          # multiple times.
+          x, y = cell.x, cell.y
+          y += offset 
+
+          # Translate coordinates to the bounds we are in, since drawing is 
+          # relative to the cursor, not ref_bounds.
+          x += @pdf.bounds.left_side - @pdf.bounds.absolute_left
+          y -= @pdf.bounds.absolute_bottom
+
+          # Set background color, if any.
+          if @row_colors && (!@header || cell.row > 0)
+            index = @header ? (cell.row - 1) : cell.row
+            cell.background_color ||= @row_colors[index % @row_colors.length]
+          end
+
+          cells_this_page << [cell, [x, y]]
+          last_y = y
+        end
+        # Draw the last page of cells
+        Cell.draw_cells(cells_this_page)
+
+        @pdf.move_cursor_to(last_y - @cells.last.height)
       end
-
-      # Track cells to be drawn on this page. They will all be drawn when this
-      # page is finished.
-      cells_this_page = []
-
-      @cells.each do |cell|
-        if cell.height > (cell.y + offset) - ref_bounds.absolute_bottom &&
-           cell.row > started_new_page_at_row
-          # Ink all cells on the current page
-          Cell.draw_cells(cells_this_page)
-          cells_this_page = []
-
-          # start a new page or column
-          @pdf.bounds.move_past_bottom
-          draw_header unless cell.row == 0
-          offset = @pdf.y - cell.y
-          started_new_page_at_row = cell.row
-        end
- 
-        # Don't modify cell.x / cell.y here, as we want to reuse the original
-        # values when re-inking the table. #draw should be able to be called
-        # multiple times.
-        x, y = cell.x, cell.y
-        y += offset 
-
-        # Translate coordinates to the bounds we are in, since drawing is 
-        # relative to the cursor, not ref_bounds.
-        x += @pdf.bounds.left_side - @pdf.bounds.absolute_left
-        y -= @pdf.bounds.absolute_bottom
-
-        # Set background color, if any.
-        if @row_colors && (!@header || cell.row > 0)
-          index = @header ? (cell.row - 1) : cell.row
-          cell.background_color = @row_colors[index % @row_colors.length]
-        end
-
-        cells_this_page << [cell, [x, y]]
-        last_y = y
-      end
-      # Draw the last page of cells
-      Cell.draw_cells(cells_this_page)
-
-      @pdf.move_cursor_to(last_y - @cells.last.height)
     end
 
     # Calculate and return the constrained column widths, taking into account
@@ -313,19 +326,19 @@ module Prawn
     #
     def column_widths
       @column_widths ||= begin
-        if width < cells.min_width
+        if width - cells.min_width < -epsilon
           raise Errors::CannotFit,
             "Table's width was set too small to contain its contents " +
             "(min width #{cells.min_width}, requested #{width})"
         end
 
-        if width > cells.max_width
+        if width - cells.max_width > epsilon
           raise Errors::CannotFit,
             "Table's width was set larger than its contents' maximum width " +
             "(max width #{cells.max_width}, requested #{width})"
         end
 
-        if width < natural_width
+        if width - natural_width < -epsilon
           # Shrink the table to fit the requested width.
           f = (width - cells.min_width).to_f / (natural_width - cells.min_width)
 
@@ -333,7 +346,7 @@ module Prawn
             min, nat = column(c).min_width, column(c).width
             (f * (nat - min)) + min
           end
-        elsif width > natural_width
+        elsif width - natural_width > epsilon
           # Expand the table to fit the requested width.
           f = (width - cells.width).to_f / (cells.max_width - cells.width)
 
@@ -457,6 +470,34 @@ module Prawn
       y_positions.each_with_index { |y, i| row(i).y = y }
     end
 
+    # Sets up a bounding box to position the table according to the specified
+    # :position option, and yields.
+    #
+    def with_position
+      x = case @position || :left
+          when :left   then return yield
+          when :center then (@pdf.bounds.width - width) / 2.0
+          when :right  then  @pdf.bounds.width - width
+          when Numeric then  @position
+          else raise ArgumentError, "unknown position #{@position.inspect}"
+          end
+      dy = @pdf.bounds.absolute_top - @pdf.y
+      final_y = nil
+
+      @pdf.bounding_box([x, @pdf.bounds.top], :width => width) do
+        @pdf.move_down dy
+        yield
+        final_y = @pdf.y
+      end
+
+      @pdf.y = final_y
+    end
+
+    private
+
+    def epsilon
+      @epsilon
+    end
   end
 
 

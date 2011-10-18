@@ -103,6 +103,11 @@ describe "Prawn::Table" do
         Set.new(%w[R0C0 R0C1 R1C0 R1C1])
     end
 
+    it "should select rows by array" do
+      Set.new(@table.rows([0, 1]).map { |c| c.content }).should == 
+        Set.new(%w[R0C0 R0C1 R1C0 R1C1])
+    end
+
     it "should allow negative row selectors" do
       Set.new(@table.row(-1).map { |c| c.content }).should ==
         Set.new(%w[R1C0 R1C1])
@@ -116,6 +121,11 @@ describe "Prawn::Table" do
       Set.new(@table.column(0).map { |c| c.content }).should == 
         Set.new(%w[R0C0 R1C0])
       Set.new(@table.columns(0..1).map { |c| c.content }).should == 
+        Set.new(%w[R0C0 R0C1 R1C0 R1C1])
+    end
+
+    it "should select columns by array" do
+      Set.new(@table.columns([0, 1]).map { |c| c.content }).should == 
         Set.new(%w[R0C0 R0C1 R1C0 R1C1])
     end
 
@@ -219,6 +229,13 @@ describe "Prawn::Table" do
         table.width.should == 300
       end
 
+      it "should accept Numeric for column_widths" do
+        table = Prawn::Table.new([%w[ a b c ], %w[d e f]], @pdf) do |t|
+          t.column_widths = 50
+        end
+        table.width.should == 150
+      end
+
       it "should calculate unspecified column widths as "+
          "(max(string_width) + 2*horizontal_padding)" do
         hpad, fs = 3, 12
@@ -253,6 +270,28 @@ describe "Prawn::Table" do
         table.width.should == col1_width + col2_width + 
                               2*stretchy_columns*hpad + 
                               col0_width + col3_width
+      end
+
+      it "should preserve all manually requested column widths" do
+        col0_width = 50
+        col1_width = 20
+        col3_width = 60
+
+        table = Prawn::Table.new( [["snake", "foo", "b", 
+                                      "some long, long text that will wrap"],
+                                   %w[kitten d foobar banana]], @pdf,
+                                 :width => 150) do
+
+          column(0).width = col0_width
+          column(1).width = col1_width
+          column(3).width = col3_width
+        end
+
+        table.draw
+
+        table.column(0).width.should == col0_width
+        table.column(1).width.should == col1_width
+        table.column(3).width.should == col3_width
       end
 
       it "should not exceed the maximum width of the margin_box" do
@@ -424,6 +463,41 @@ describe "Prawn::Table" do
 
     end
 
+    describe "position" do
+      it "should center tables with :position => :center" do
+        @pdf.expects(:bounding_box).with do |(x, y), opts|
+          expected = (@pdf.bounds.width - 500) / 2.0
+          (x - expected).abs < 0.001
+        end
+
+        @pdf.table([["foo"]], :column_widths => 500, :position => :center)
+      end
+
+      it "should right-align tables with :position => :right" do
+        @pdf.expects(:bounding_box).with do |(x, y), opts|
+          expected = @pdf.bounds.width - 500
+          (x - expected).abs < 0.001
+        end
+
+        @pdf.table([["foo"]], :column_widths => 500, :position => :right)
+      end
+
+      it "should accept a Numeric" do
+        @pdf.expects(:bounding_box).with do |(x, y), opts|
+          expected = 123
+          (x - expected).abs < 0.001
+        end
+
+        @pdf.table([["foo"]], :column_widths => 500, :position => 123)
+      end
+
+      it "should raise an ArgumentError on unknown :position" do
+        lambda do
+          @pdf.table([["foo"]], :position => :bratwurst)
+        end.should.raise(ArgumentError)
+      end
+    end
+
   end
 
   describe "Multi-page tables" do
@@ -562,6 +636,15 @@ describe "Prawn::Table" do
       t.cells.map{|x| x.background_color}.should == 
         %w[333333 cccccc ffffff cccccc]
     end
+
+    it "should not override an explicit background_color" do
+      data = [["foo"], ["bar"], ["baz"]]
+      pdf = Prawn::Document.new
+      table = pdf.table(data, :row_colors => ['cccccc', 'ffffff']) { |t|
+        t.cells[0, 0].background_color = 'dddddd'
+      }
+      table.cells.map{|x| x.background_color}.should == %w[dddddd ffffff cccccc]
+    end
   end
 
   describe "inking" do
@@ -646,6 +729,22 @@ describe "Prawn::Table" do
 
       pdf.move_cursor_to(400)
       t.draw
+    end
+
+    describe "in stretchy bounding boxes" do
+      it "should draw all cells on a row at the same y-position" do
+        pdf = Prawn::Document.new
+        
+        text_y = pdf.y.to_i - 5 # text starts 5pt below current y pos (padding)
+
+        pdf.bounding_box([0, pdf.cursor], :width => pdf.bounds.width) do
+          pdf.expects(:draw_text!).checking { |text, options|
+            pdf.bounds.absolute_top.should == text_y
+          }.times(3)
+
+          pdf.table([%w[a b c]])
+        end
+      end
     end
   end
 

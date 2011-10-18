@@ -13,7 +13,13 @@ module Prawn
                                              
     module_function
 
-    ruby_18 do
+    if "".respond_to?(:encode)
+      # Ruby 1.9+
+      def utf8_to_utf16(str)
+        "\xFE\xFF".force_encoding("UTF-16BE") + str.encode("UTF-16BE")
+      end
+    else
+      # Ruby 1.8
       def utf8_to_utf16(str)
         utf16 = "\xFE\xFF"
 

@@ -106,6 +106,9 @@ module Prawn
           content.kind_of?(Date)
         
         if content.is_a?(Hash)
+          if img = content[:image]
+            return Cell::Image.new(pdf, at, content)
+          end
           options.update(content)
           content = options[:content]
         else
@@ -123,8 +126,7 @@ module Prawn
           subtable = Prawn::Table.new(options[:content], pdf, {})
           Cell::Subtable.new(pdf, at, options.merge(:content => subtable))
         else
-          # TODO: other types of content
-          raise ArgumentError, "Content type not recognized: #{content.inspect}"
+          raise Errors::UnrecognizedTableContent
         end
       end
 
@@ -260,10 +262,12 @@ module Prawn
       # Draws the cell's content at the point provided.
       #
       def draw_bounded_content(pt)
-        @pdf.bounding_box([pt[0] + padding_left, pt[1] - padding_top], 
-                          :width  => content_width + FPTolerance,
-                          :height => content_height + FPTolerance) do
-          draw_content
+        @pdf.float do
+          @pdf.bounding_box([pt[0] + padding_left, pt[1] - padding_top], 
+                            :width  => content_width + FPTolerance,
+                            :height => content_height + FPTolerance) do
+            draw_content
+          end
         end
       end
 
