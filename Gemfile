@@ -1,7 +1,7 @@
 source :rubygems
 
 gem "ttfunk", "~>1.0.0"
-gem "pdf-reader", "~>0.9.0"
+gem "pdf-reader", "~>0.10.0"
 
 group :test do
   # TODO: once an official pdf-inspector gem is released, remove the :git
