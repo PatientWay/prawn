@@ -76,7 +76,7 @@ module Prawn
         name = string_to_utf8(deref(field_dict[:T]))
         spec = {}
         spec[:box] = deref(field_dict[:Rect])
-        spec[:default_value] = string_to_utf8(deref(field_dict[:V] || field_dict[:DV]))
+        spec[:default_value] = string_to_utf8(deref(field_dict[:V] || field_dict[:DV] || ""))
         page_ref = field_dict[:P]
         unless page_ref
           # The /P (page) entry is optional, so if there's only one page, assume the first page.
